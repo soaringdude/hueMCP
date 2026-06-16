@@ -1,0 +1,35 @@
+[project]
+name = "huemcp"
+version = "1.0.0"
+description = "MCP server for Philips Hue: manage rooms, lights, and scenes (CLIP v2 API)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "starlette>=0.37",
+    "uvicorn>=0.30",
+    "cryptography>=42",
+    "python-hue-v2>=2.0",
+]
+
+[project.scripts]
+huemcp = "huemcp.__main__:main"
+huemcp-cli = "huemcp.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["huemcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["smoke: real-bridge tests, manual only"]

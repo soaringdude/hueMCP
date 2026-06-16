@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Management helper for the hue MCP. See ~/.local/lib/mcp/README.md.
+MCP_NAME=hue
+MCP_LABEL=com.hueMCP
+MCP_DIR=/opt/memoir/hueMCP
+MCP_PORT=8910
+MCP_SCHEME=https
+MCP_LOG=/opt/memoir/.hermes/logs/huemcp.log
+MCP_PLIST="$MCP_DIR/com.hueMCP.plist"
+
+# /healthz: {status, server, version, paired, bridge_ip}. Warn if the bridge is unpaired.
+render_health() {
+  local j="$1" level=ok paired ip
+  paired="$(jq -r '.paired // false' <<<"$j" 2>/dev/null)"
+  ip="$(jq -r '.bridge_ip // "none"' <<<"$j" 2>/dev/null)"
+  [ "$paired" != "true" ] && level=warn
+  echo "$level"
+  printf '  %-9s %s\n' server "$(jq -r '.server // "?"' <<<"$j" 2>/dev/null)"
+  printf '  %-9s %s\n' paired "$paired"
+  printf '  %-9s %s\n' bridge "$ip"
+}
+
+source /opt/memoir/.local/lib/mcp/common.sh
+mcp_main "$@"

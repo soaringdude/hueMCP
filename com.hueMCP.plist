@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The committed copy keeps HUE_AUTH_TOKEN=REPLACE_WITH_TOKEN; the installed copy
+     under /Library/LaunchDaemons holds the real token (644 root:wheel). Pair the
+     bridge first with `huemcp-cli pair` (writes ~/.hueMCP/state.json), or set
+     HUE_BRIDGE_IP + HUE_APP_KEY below. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.hueMCP</string>
+
+  <key>UserName</key>
+  <string>memoir</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/memoir/hueMCP/.venv/bin/huemcp</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/opt/memoir/hueMCP</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/memoir/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HUE_AUTH_TOKEN</key>
+    <string>REPLACE_WITH_TOKEN</string>
+    <key>HUE_BIND</key>
+    <string>0.0.0.0</string>
+    <key>HUE_PORT</key>
+    <string>8910</string>
+    <key>HUE_TLS</key>
+    <string>selfsigned</string>
+    <key>HUE_STATE_DIR</key>
+    <string>/opt/memoir/.hueMCP</string>
+    <key>HUE_LOG_LEVEL</key>
+    <string>info</string>
+    <!-- Optional: pin the bridge instead of using state.json from `huemcp-cli pair`:
+    <key>HUE_BRIDGE_IP</key><string>192.0.2.5</string>
+    <key>HUE_APP_KEY</key><string>...</string> -->
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/opt/memoir/.hermes/logs/huemcp.log</string>
+  <key>StandardErrorPath</key>
+  <string>/opt/memoir/.hermes/logs/huemcp.log</string>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+</dict>
+</plist>

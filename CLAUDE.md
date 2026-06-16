@@ -1,0 +1,112 @@
+# CLAUDE.md — hueMCP
+
+MCP server giving an agent control of **Philips Hue** rooms, lights, and scenes over
+the LAN via the Hue **CLIP v2 API** (wrapping `python-hue-v2`). Built in the house
+style — see `~/.claude/skills/new-mcp`. Like sonosMCP, it's a reliable device-control
+layer; orchestration lives in the agent above it.
+
+## Authoritative docs (keep in sync with the code)
+- `docs/hueMCP_API_SPEC.md` — wire contract (tools, args, error kinds, version).
+- `docs/hueMCP_SKILL.md` — how a consuming agent should operate it.
+- `README.md` — setup, pairing, running, env vars.
+
+## Layout
+```
+huemcp/              flat package (no src/)
+  __main__.py        entrypoint -> uvicorn (HTTPS)
+  cli.py             huemcp-cli: stdlib HTTP client + `discover`/`pair` setup commands
+  server.py          JSON-RPC/MCP dispatch + Starlette app (auth, /cert, /healthz)
+  client.py          HueBackend: the ONLY place that touches the bridge (python-hue-v2)
+  tools.py           tool registry (@_register): 9 tools -> backend
+  config.py errors.py tls.py logging_setup.py
+tests/               pytest against an in-memory FakeBridge (no real bridge)
+docs/                API_SPEC + SKILL
+```
+
+## Commands
+```bash
+uv sync --extra dev          # install (uv, never pip)
+uv run pytest                # full suite, no bridge required
+uv run huemcp                # run server (needs HUE_AUTH_TOKEN; warns if unpaired)
+uv run huemcp-cli pair       # discover bridge + press link button + store app key
+uv run huemcp-cli list-tools # exercise a running server
+```
+Manual run + probe:
+```bash
+HUE_AUTH_TOKEN=dev HUE_PORT=8911 HUE_BIND=127.0.0.1 HUE_STATE_DIR=/tmp/huemcp uv run huemcp
+HUE_URL=https://127.0.0.1:8911 HUE_AUTH_TOKEN=dev uv run huemcp-cli rooms
+```
+
+## Architecture & invariants (do not regress)
+- **Raw JSON-RPC 2.0 over Starlette**, `dispatch()` is pure/testable. Bearer auth +
+  body limit + `/cert` + `/healthz` in `create_app`. Blocking bridge calls run in a
+  threadpool; mutating tools serialize on a `write_lock`, reads run concurrently
+  (`mutates` flag in `tools.py`). A new read-only tool must pass `mutates=False` and
+  must not call a setter.
+- **All bridge access goes through `HueBackend`** (`client.py`), built lazily and
+  dependency-injected (`hue_factory`) so tests use a fake. Reads use the bridge-level
+  getters (one HTTP call returning raw v2 dicts that we parse); writes use
+  `set_light` / `set_grouped_light_service` / `set_scene`.
+- **Typed errors are the contract.** `HueMCPError(kind, msg, hint)` with kind in
+  {invalid_argument, not_found, unsupported, hue_unreachable, upstream_error}. Agents
+  branch on `kind`. `not_found` is raised for unknown light/room/scene ids by checking
+  existence before the write.
+- **Pairing is CLI-only, never an MCP tool.** Minting a bridge app key requires the
+  physical link button; an agent must not be able to do it. `huemcp-cli pair` writes
+  `state.json` (0600).
+- **Rooms are controlled via their `grouped_light` service**, looked up from the
+  room's `services`. Scenes recall with `{"recall": {"action": "active"}}`.
+- **Write-path cache.** `set_room`/`set_light` resolve structural lookups
+  (room→grouped_light, light-id existence) from a TTL cache (`HUE_CACHE_TTL_S`,
+  default 600s; refresh-on-miss; warmed for free by `list_rooms`/`list_lights`)
+  instead of a `get_*` fetch per write. That drops a warm write from two bridge
+  calls to one — verified live: warm `set_room` ~0.22s vs cold ~0.43s. **Live state
+  (on/off, brightness) is never cached**; the `list_*`/`get_*` reads always hit the
+  bridge. Call `invalidate_cache()` if a future op adds/removes rooms or lights.
+
+## Key facts about the Hue v2 model / python-hue-v2 (2.2.1)
+- Brightness is **0-100** (`dimming.brightness`, a percent). `on` is `{"on": bool}`.
+- Color temperature is **mirek** 153 (cool) – 500 (warm) (`color_temperature.mirek`).
+- Color is CIE xy: `color.xy = {"x": .., "y": ..}` (we pass `{"x","y"}`).
+- Light/room **names** live in `metadata.name`. A light's `owner.rid` is its device;
+  a room lists its devices in `children` (rtype `device`) — `get_room` joins lights to
+  the room via that.
+- A scene's room is `scene.group = {rid, rtype:"room"}`.
+- `Bridge.get_*()` return `List[dict]` (already unwrapped from the v2 envelope).
+- **Live reads verified** against a real bridge (192.129.1.3): `status`, `list_rooms`
+  (3), `list_lights` (11), `list_scenes` (40) all return and parse correctly. The
+  library handles the bridge's self-signed HTTPS cert itself, so no SSL handling is
+  needed in `HueBackend._call`. **Writes** (`set_light`/`set_room`/`activate_scene`)
+  use the same verified `set_*` bridge calls and pass against the fake, but have not
+  been toggled on real hardware (would physically change someone's lights) — exercise
+  one reversible write when convenient to fully close the loop.
+
+## Health & monitoring
+`GET /healthz` (unauthenticated) reports `{status, server, version, paired, bridge_ip}`
+with **no bridge call** (so a down bridge can't hang it). `paired=false` ⇒ `status:"warn"`.
+The `mcpctl` `render_health` surfaces paired + bridge IP and flips to warn when unpaired.
+
+## Deployment
+launchd LaunchDaemon `com.hueMCP.plist` (port 8910, runs as `memoir` from the repo
+`.venv`). Template ships `HUE_AUTH_TOKEN=REPLACE_WITH_TOKEN`; the installed copy holds
+the real token. Pair the bridge first (or set `HUE_BRIDGE_IP`/`HUE_APP_KEY` in the plist).
+```bash
+sudo install -m 644 -o root -g wheel com.hueMCP.plist /Library/LaunchDaemons/com.hueMCP.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.hueMCP.plist
+sudo launchctl enable system/com.hueMCP
+sudo launchctl kickstart -k system/com.hueMCP
+```
+Management via the shared harness (`mcpctl` here + `~/.local/lib/mcp/common.sh`),
+registered in `~/.config/mcp/registry.conf`:
+```bash
+mcp hue health | status | restart | reload | logs -f
+mcp ports                # port map across all MCPs + collisions + next free
+```
+Port **8910** is the first allocation in the reserved MCP block **8900-8949**. Pick any
+new MCP's port with `mcp ports` (it flags collisions and prints the next free port);
+keep it identical in `config.py`, the plist (runtime authority), and `mcpctl`.
+
+## Conventions
+- `uv` for everything; never pip, never global installs.
+- No em-dashes in prose/log output. Never log the app key or bearer token.
+- Commit messages end with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
