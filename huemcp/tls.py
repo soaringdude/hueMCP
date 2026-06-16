@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import ipaddress
+import os
 from pathlib import Path
 
 
@@ -44,11 +45,17 @@ def ensure_self_signed(cert_path: Path, key_path: Path, host: str = "hueMCP.loca
         .sign(key, hashes.SHA256())
     )
 
-    key_path.write_bytes(key.private_bytes(
+    key_bytes = key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.TraditionalOpenSSL,
         serialization.NoEncryption(),
-    ))
+    )
+    # The private key is unencrypted on disk, so it must never be world-readable: create
+    # it 0600 before writing (fchmod also tightens a pre-existing key file).
+    fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(key_bytes)
     cert_pem = cert.public_bytes(serialization.Encoding.PEM)
     cert_path.write_bytes(cert_pem)
     return cert_pem.decode()

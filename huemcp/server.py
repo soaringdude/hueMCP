@@ -6,6 +6,7 @@ The Starlette layer adds bearer auth, body-size limits, and the /cert and /healt
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import threading
@@ -105,7 +106,9 @@ def create_app(backend: HueBackend, auth_token: str, cert_pem: str | None = None
 
     async def mcp_endpoint(request: Request) -> Response:
         auth = request.headers.get("authorization", "")
-        if not auth.startswith("Bearer ") or auth[len("Bearer "):] != auth_token:
+        presented = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
+        # Constant-time compare so a wrong token can't be recovered byte-by-byte via timing.
+        if not hmac.compare_digest(presented, auth_token):
             log.warning("unauthorized request from %s", request.client.host if request.client else "?")
             return JSONResponse(_rpc_error(None, -32001, "unauthorized"), status_code=401)
 

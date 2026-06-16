@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -21,6 +22,48 @@ from pathlib import Path
 from .errors import HueMCPError
 
 log = logging.getLogger("huemcp.client")
+
+
+# --- argument validation (the contract: out-of-range/malformed -> invalid_argument) ---
+# server.py does not enforce the inputSchema bounds, so the backend is the single point
+# that guarantees the documented ranges before anything reaches the bridge.
+
+def _validate_brightness(v):
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise HueMCPError("invalid_argument", "brightness must be a number in 0-100")
+    if not (0.0 <= f <= 100.0):
+        raise HueMCPError("invalid_argument", f"brightness {f} out of range 0-100")
+    return f
+
+
+def _validate_mirek(v):
+    if v is None:
+        return None
+    try:
+        i = int(v)
+    except (TypeError, ValueError):
+        raise HueMCPError("invalid_argument", "color_temperature_mirek must be an integer in 153-500")
+    if not (153 <= i <= 500):
+        raise HueMCPError("invalid_argument", f"color_temperature_mirek {i} out of range 153-500")
+    return i
+
+
+def _validate_xy(v):
+    if v is None:
+        return None
+    if not isinstance(v, dict) or "x" not in v or "y" not in v:
+        raise HueMCPError("invalid_argument", "color_xy must be an object with x and y")
+    try:
+        x, y = float(v["x"]), float(v["y"])
+    except (TypeError, ValueError):
+        raise HueMCPError("invalid_argument", "color_xy x and y must be numbers in 0-1")
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        raise HueMCPError("invalid_argument", "color_xy x and y must be in 0-1")
+    return {"x": x, "y": y}
 
 
 # --- state persistence (written by `huemcp-cli pair`) ------------------------
@@ -36,8 +79,13 @@ def load_state(state_path: Path) -> tuple[str | None, str | None]:
 def save_state(state_path: Path, bridge_ip: str, app_key: str) -> None:
     state_path = Path(state_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps({"bridge_ip": bridge_ip, "app_key": app_key}, indent=2))
-    state_path.chmod(0o600)  # contains the bridge app key (a secret)
+    data = json.dumps({"bridge_ip": bridge_ip, "app_key": app_key}, indent=2)
+    # Create 0600 BEFORE writing: the file holds the bridge app key (a secret), so it
+    # must never exist world-readable, even briefly. fchmod covers a pre-existing file.
+    fd = os.open(state_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(data)
 
 
 # --- discovery + pairing (setup-time; used by the CLI) -----------------------
@@ -255,6 +303,11 @@ class HueBackend:
         if on is None and brightness is None and color_xy is None and color_temperature_mirek is None:
             raise HueMCPError("invalid_argument",
                               "specify at least one of: on, brightness, color_xy, color_temperature_mirek")
+        # Validate/coerce bounds before anything reaches the bridge (invalid_argument on
+        # bad input), since server.py does not enforce the inputSchema min/max.
+        brightness = _validate_brightness(brightness)
+        color_temperature_mirek = _validate_mirek(color_temperature_mirek)
+        color_xy = _validate_xy(color_xy)
         # Existence check via the cached light-id set (refresh-on-miss) instead of a
         # get_lights() call on every write — gives a clean not_found without the round-trip.
         if not self._light_exists(light_id):
@@ -263,11 +316,11 @@ class HueBackend:
         if on is not None:
             self._call(b.set_light, light_id, "on", {"on": bool(on)})
         if brightness is not None:
-            self._call(b.set_light, light_id, "dimming", {"brightness": float(brightness)})
+            self._call(b.set_light, light_id, "dimming", {"brightness": brightness})
         if color_xy is not None:
             self._call(b.set_light, light_id, "color", {"xy": color_xy})
         if color_temperature_mirek is not None:
-            self._call(b.set_light, light_id, "color_temperature", {"mirek": int(color_temperature_mirek)})
+            self._call(b.set_light, light_id, "color_temperature", {"mirek": color_temperature_mirek})
         return {"success": True, "id": light_id}
 
     # --- rooms ---
@@ -314,6 +367,7 @@ class HueBackend:
     def set_room(self, room_id: str, *, on=None, brightness=None) -> dict:
         if on is None and brightness is None:
             raise HueMCPError("invalid_argument", "specify at least one of: on, brightness")
+        brightness = _validate_brightness(brightness)
         # Resolve room -> grouped_light from cache (refresh-on-miss): no get_rooms() call
         # on the warm write path. Raises not_found; None means no grouped_light.
         gl_id = self._room_grouped_light_id(room_id)
@@ -323,7 +377,7 @@ class HueBackend:
         if on is not None:
             props["on"] = {"on": bool(on)}
         if brightness is not None:
-            props["dimming"] = {"brightness": float(brightness)}
+            props["dimming"] = {"brightness": brightness}
         self._call(self._bridge().set_grouped_light_service, gl_id, props)
         return {"success": True, "room_id": room_id, "grouped_light_id": gl_id}
 
