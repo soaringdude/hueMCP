@@ -40,7 +40,7 @@ backward-compatible change).
 
 ### `status` — read-only
 - **Args:** none
-- **Returns:** `{ "paired": bool, "bridge_ip": str|null, "reachable": bool, "lights": int, "rooms": int, "scenes": int }` (counts/`reachable` present only when paired)
+- **Returns:** `{ "paired": bool, "bridge_ip": str|null, "reachable": bool, "lights": int, "rooms": int, "scenes": int }`. `reachable` and the counts are present only when paired; if paired but the bridge is unreachable, `reachable:false` and an `"error": str` replaces the counts.
 - **Errors:** none (reports state)
 
 ### `list_lights` — read-only
@@ -56,7 +56,7 @@ backward-compatible change).
 - **Args:** `light_id` (required); at least one of `on` (bool), `brightness` (0-100),
   `color_xy` (`{"x":0-1,"y":0-1}`), `color_temperature_mirek` (153-500)
 - **Returns:** `{ "success": true, "id": light_id }`
-- **Errors:** `invalid_argument` (no field), `not_found`, `hue_unreachable`
+- **Errors:** `invalid_argument` (no field, or a value out of range: `brightness` ∉ 0-100, `color_temperature_mirek` ∉ 153-500, malformed `color_xy`), `not_found`, `hue_unreachable`
 
 ### `list_rooms` — read-only
 - **Returns:** `[{ "id","name","grouped_light_id","device_count","on","brightness" }]`
@@ -70,7 +70,7 @@ backward-compatible change).
 ### `set_room` — mutating
 - **Args:** `room_id` (required); at least one of `on` (bool), `brightness` (0-100)
 - **Returns:** `{ "success": true, "room_id", "grouped_light_id" }`
-- **Errors:** `invalid_argument` (no field), `not_found`, `unsupported`, `hue_unreachable`
+- **Errors:** `invalid_argument` (no field, or `brightness` ∉ 0-100), `not_found`, `unsupported`, `hue_unreachable`
 
 ### `list_scenes` — read-only
 - **Returns:** `[{ "id","name","room_id","room_name" }]`

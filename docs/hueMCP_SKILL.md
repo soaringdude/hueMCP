@@ -75,11 +75,14 @@ mcp_servers:
    `list_rooms`, find the room whose `name` matches, then use its `id`. Same for lights
    and scenes (`list_lights` / `list_scenes`).
 2. **Prefer `set_room` for "the whole room"** and `set_light` for a single bulb. To
-   "turn the lights to 40%", `set_room(room_id, brightness=40)` — it also implies on.
+   "turn the lights to 40%", pass `on` and `brightness` together:
+   `set_room(room_id, on=true, brightness=40)`. Setting brightness alone does not
+   reliably turn an off light on, so include `on=true` when you want it lit.
 3. **Branch on the error `kind`, not the message.** `not_found` → re-list and pick a
    valid id. `hue_unreachable` → the bridge is unconfigured or offline; report it and
    stop (don't retry-loop). `unsupported` → report the gap. `invalid_argument` → fix
-   the call (e.g. you passed `set_light`/`set_room` with no field to change).
+   the call (you passed no field to change, or a value out of range: brightness 0-100,
+   mirek 153-500, color_xy x/y each 0-1).
 4. **Brightness is 0-100.** Color is CIE xy (`{"x":..,"y":..}`, each 0-1). White
    temperature is mirek 153-500 (lower = cooler/bluer, higher = warmer/amber).
 5. **Activating a scene** sets its room's lights to the scene; it overrides current
@@ -92,7 +95,7 @@ mcp_servers:
 **"Dim the living room to 30%":**
 ```
 1. list_rooms -> find {name: "Living Room"} -> room_id
-2. set_room(room_id, brightness=30)
+2. set_room(room_id, on=true, brightness=30)
 ```
 
 **"Turn off the lamp":**
@@ -117,7 +120,8 @@ mcp_servers:
   duplicates or a slightly different name.
 
 ## Pitfalls
-- `set_light` / `set_room` with no state field returns `invalid_argument` — always pass
-  at least one of on/brightness/color.
+- `set_light` / `set_room` with no state field returns `invalid_argument`; always pass
+  at least one of on/brightness/color. An out-of-range value (brightness outside 0-100,
+  mirek outside 153-500, or a malformed color_xy) is also `invalid_argument`.
 - `room.brightness` is the grouped-light average; individual lights may differ. Use
   `get_room` to see per-light state.
