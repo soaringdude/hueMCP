@@ -79,13 +79,12 @@ HUE_URL=https://127.0.0.1:8911 HUE_AUTH_TOKEN=dev uv run huemcp-cli rooms
   the room via that.
 - A scene's room is `scene.group = {rid, rtype:"room"}`.
 - `Bridge.get_*()` return `List[dict]` (already unwrapped from the v2 envelope).
-- **Live reads verified** against a real bridge (192.129.1.3): `status`, `list_rooms`
-  (3), `list_lights` (11), `list_scenes` (40) all return and parse correctly. The
-  library handles the bridge's self-signed HTTPS cert itself, so no SSL handling is
-  needed in `HueBackend._call`. **Writes** (`set_light`/`set_room`/`activate_scene`)
-  use the same verified `set_*` bridge calls and pass against the fake, but have not
-  been toggled on real hardware (would physically change someone's lights) — exercise
-  one reversible write when convenient to fully close the loop.
+- **Verified against a real bridge (192.129.1.3).** Reads (`status`, `list_rooms` (3),
+  `list_lights` (11), `list_scenes` (40)) return and parse correctly. The library
+  handles the bridge's self-signed HTTPS cert itself, so no SSL handling is needed in
+  `HueBackend._call`. **Writes** (`set_light`/`set_room`/`activate_scene`) use the same
+  `set_*` bridge calls and are now verified in production: the server is deployed and
+  controlling live lights on this bridge, in addition to the fake-bridge tests.
 
 ## Health & monitoring
 `GET /healthz` (unauthenticated) reports `{status, server, version, paired, bridge_ip}`
